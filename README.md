@@ -1,5 +1,16 @@
-Para intalar las dependencias necesarias ejecutar una consola en la carpeta donde se encuentra el archivo requirements.txt
-ejecutar el siguiente comando sin comillas "pip install -r requirements.txt" o "py -m pip install -r requirements.txt"
+### Instalación de dependencias
 
+1. Abre una consola en la carpeta donde se encuentra el archivo `requirements.txt`.
+2. Ejecuta uno de los siguientes comandos (sin comillas):
 
-Se debe tener 7z isntalado en el sistema y agreago al PATH (variables de entorno)
+   ```bash
+   pip install -r requirements.txt
+   ```
+   o, alternativamente:
+   ```bash
+   py -m pip install -r requirements.txt
+   ```
+
+### Requisito adicional
+
+Es necesario tener **7-Zip** instalado en el sistema y configurado en el **PATH** (variables de entorno) para que sea accesible desde la línea de comandos.
