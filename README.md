@@ -1,7 +1,7 @@
 ### Instalación de dependencias
 
 1. Abre una consola en la carpeta donde se encuentra el archivo `requirements.txt`.
-2. Ejecuta uno de los siguientes comandos (sin comillas):
+2. Ejecuta uno de los siguientes comandos:
 
    ```bash
    pip install -r requirements.txt
