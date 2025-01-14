@@ -69,7 +69,20 @@ def convertir_tdms_a_csv(archivo_tdms, carpeta_salida):
 
         for canal in grupo.channels():
             nombre_canal = canal.name
-            data_dict[nombre_canal] = canal.data
+            # Si el canal tiene datos de tiempo, conviértelo explícitamente
+            if canal.name.lower() == "time" or canal.name.lower().startswith("date"):
+                # Convertir los datos de tiempo sin alterar la zona horaria
+                datos_tiempo = pd.to_datetime(canal.data, format='%Y-%m-%d %H:%M:%S.%f', errors='coerce')
+                
+                # Corregir la hora (restar 3 horas)
+                datos_tiempo_corregidos = datos_tiempo - pd.Timedelta(hours=3)
+                
+                # Almacenar los datos corregidos en el diccionario
+                data_dict[nombre_canal] = datos_tiempo_corregidos
+            else:
+                # Para los demás canales, almacenar los datos sin modificar
+                data_dict[nombre_canal] = canal.data
+
 
         # Crear un DataFrame con los datos
         df = pd.DataFrame(data_dict)
@@ -163,7 +176,7 @@ def procesar_archivos_tdms_paralelo(carpeta_tdms, num_workers=4):
                 finally:
                     barra.update(1)  # Incrementar la barra de progreso
 
-def ordenar_y_agrupado_por_dia(input_folder):
+def ordenar_y_agrupado_por_dia(input_folder, procesar_incompleto=False):
     """
     Procesa archivos CSV por hora, agrupa por día y maneja archivos incompletos.
     Si un archivo está incompleto, se guarda en una carpeta temporal. Luego se completa
@@ -172,11 +185,22 @@ def ordenar_y_agrupado_por_dia(input_folder):
     Parámetros:
     input_folder (str): Carpeta donde se encuentran los archivos CSV.
     """
-    temp_folder = os.path.join(input_folder, 'temp')
+    # Obtener la ruta donde se encuentra el script
+    script_folder = os.path.dirname(os.path.abspath(__file__))
+
+    # Crear la carpeta temporal en la misma ruta del script
+    temp_folder = os.path.join(script_folder, 'temp')
     
     # Verificar si la carpeta temporal existe, si no la creamos
     if not os.path.exists(temp_folder):
         os.makedirs(temp_folder)
+
+    # Mover los archivos temporales a la carpeta de entrada
+    for temp_file_name in os.listdir(temp_folder):
+        temp_file_path = os.path.join(temp_folder, temp_file_name)
+        if os.path.exists(temp_file_path):
+            # El archivo temporal se mueve directamente sin cambiar su nombre
+            shutil.move(temp_file_path, os.path.join(input_folder, temp_file_name))
 
     # Obtener la lista de todos los archivos CSV en la carpeta de entrada
     csv_files = [
@@ -227,41 +251,21 @@ def ordenar_y_agrupado_por_dia(input_folder):
         last_time = daily_data['Time'].max()
         if last_time.hour != 23 or last_time.minute != 59 or last_time.second != 59:
             # Mover el archivo incompleto a la carpeta temporal
-            temp_file = os.path.join(temp_folder, f"{date}.temp.csv")
+            temp_file = os.path.join(temp_folder, f"{date}_temp.csv")
             shutil.copy(output_file, temp_file)
-
-
-    # Verificar si el archivo temporal de la ejecución anterior existe
-    for temp_file_name in os.listdir(temp_folder):
-        temp_file_path = os.path.join(temp_folder, temp_file_name)
-        if os.path.exists(temp_file_path):
-            # Verificar si ya existe un archivo con el mismo nombre en la carpeta de origen
-            matching_file = os.path.join(input_folder, temp_file_name)
-            if os.path.exists(matching_file):
-                # Concatenar los archivos temporal y de salida
-                temp_data = pd.read_csv(temp_file_path, delimiter=";", decimal=",")
-                output_data = pd.read_csv(matching_file, delimiter=";", decimal=",")
-
-                # Concatenar los datos y guardar el archivo final
-                combined_data = pd.concat([output_data, temp_data], ignore_index=True)
-                combined_data.to_csv(matching_file, sep=";", decimal=",", index=False)
-
-                # Eliminar el archivo temporal
-                os.remove(temp_file_path)
-                
-                # Mover el archivo combinado a la carpeta de salida
-                shutil.move(matching_file, input_folder)
-                break
+            if not procesar_incompleto:
+                os.remove(output_file)
 
     # Eliminar los archivos CSV procesados
     eliminar_archivos_csv(csv_files)
+
 
 def eliminar_archivos_csv(csv_files):
     for file in csv_files:
         if os.path.exists(file):
             os.remove(file)
 
-def csv_to_mat(folder_path):
+def csv_to_mat(folder_path, unidad = "05"):
     """
     Convierte todos los archivos CSV en la carpeta especificada a formato .mat.
     La columna 'Time' se convierte a formato epoch con precisión en milisegundos.
@@ -284,7 +288,7 @@ def csv_to_mat(folder_path):
 
     for csv_file in tqdm(csv_files, desc="Convirtiendo archivos", unit="archivo"):
         input_file = os.path.join(folder_path, csv_file)
-        output_file = os.path.join(folder_path, f"{os.path.splitext(csv_file)[0]}.mat")
+        output_file = os.path.join(folder_path, f"{os.path.splitext(csv_file)[0].replace('-', '.')}-u{unidad}.mat")
         
         # Paso 1: Leer el archivo CSV
         data = pd.read_csv(input_file, delimiter=";", decimal=".")
@@ -334,39 +338,73 @@ def get_folders_from_user(config):
 def select_processing_option(input_folder, config):
     """
     Muestra las opciones al usuario para seleccionar cómo procesar los archivos.
+    Solicita si se desea procesar el último archivo incompleto y permite corregir errores.
     """
-    print("Seleccione una opción:")
-    print("1. Procesar a partir del último archivo procesado")
-    print("2. Procesar un archivo específico")
-    print("3. Procesar un rango de archivos")
-    option = input("Ingrese el número de su elección: ").strip()
+    while True:
+        print("\nSeleccione una opción:")
+        print("1. Procesar a partir del último archivo procesado")
+        print("2. Procesar un archivo específico")
+        print("3. Procesar un rango de archivos")
+        print("4. Salir")
+        option = input("Ingrese el número de su elección: ").strip()
 
-    zip_files = sorted([f for f in os.listdir(input_folder) if f.endswith('.zip')])
-    last_processed_file = config.get('last_processed_file', None)
+        zip_files = sorted([f for f in os.listdir(input_folder) if f.endswith('.zip')])
+        last_processed_file = config.get('last_processed_file', None)
 
-    if option == "1":
-        if last_processed_file:
-            start_index = zip_files.index(last_processed_file) + 1
-            return zip_files[start_index:]
+        if option == "1":
+            if last_processed_file:
+                start_index = zip_files.index(last_processed_file) + 1
+                files_to_process = zip_files[start_index:]
+            else:
+                print("No hay registro de un último archivo procesado. Se procesarán todos los archivos.")
+                files_to_process = zip_files
+
+        elif option == "2":
+            print("\nArchivos disponibles:")
+            for idx, f in enumerate(zip_files, start=1):
+                print(f"{idx}. {f}")
+            try:
+                file_index = int(input("Ingrese el número del archivo a procesar: ")) - 1
+                if 0 <= file_index < len(zip_files):
+                    files_to_process = [zip_files[file_index]]
+                else:
+                    print("Número fuera de rango. Intente de nuevo.")
+                    continue
+            except ValueError:
+                print("Entrada no válida. Intente de nuevo.")
+                continue
+
+        elif option == "3":
+            print("\nArchivos disponibles:")
+            for idx, f in enumerate(zip_files, start=1):
+                print(f"{idx}. {f}")
+            try:
+                start_index = int(input("Ingrese el número del primer archivo del rango: ")) - 1
+                end_index = int(input("Ingrese el número del último archivo del rango: ")) - 1
+                if 0 <= start_index <= end_index < len(zip_files):
+                    files_to_process = zip_files[start_index:end_index + 1]
+                else:
+                    print("Rango no válido. Intente de nuevo.")
+                    continue
+            except ValueError:
+                print("Entrada no válida. Intente de nuevo.")
+                continue
+
+        elif option == "4":
+            print("Saliendo del programa.")
+            return None, None  # Indica que no se seleccionó nada
+
         else:
-            print("No hay registro de un último archivo procesado.")
-            return zip_files  # Procesar todos los archivos
-    elif option == "2":
-        print("\nArchivos disponibles:")
-        for idx, f in enumerate(zip_files, start=1):
-            print(f"{idx}. {f}")
-        file_index = int(input("Ingrese el número del archivo a procesar: ")) - 1
-        return [zip_files[file_index]]  # Procesar solo ese archivo
-    elif option == "3":
-        print("\nArchivos disponibles:")
-        for idx, f in enumerate(zip_files, start=1):
-            print(f"{idx}. {f}")
-        start_index = int(input("Ingrese el número del primer archivo del rango: ")) - 1
-        end_index = int(input("Ingrese el número del último archivo del rango: ")) - 1
-        return zip_files[start_index:end_index + 1]
-    else:
-        print("Opción no válida. Intente de nuevo.")
-        return select_processing_option(input_folder, config)
+            print("Opción no válida. Intente de nuevo.")
+            continue
+        
+        unidad = input("Indique la unidad que se va a procesar: ")
+        # Preguntar si procesar el último archivo incompleto
+        procesar_incompleto = input(
+            "¿Desea procesar el último archivo del día aunque esté incompleto? (s/n): "
+        ).strip().lower() == "s"
+
+        return files_to_process, procesar_incompleto, unidad
 
 def main():
     config_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "config.json")
@@ -382,32 +420,48 @@ def main():
 
     input_folder = config['input_folder']
     output_folder = config['output_folder']
-    daily_folder = os.path.join(output_folder, "diarios")  # Carpeta para los archivos diarios
 
-    # Seleccionar archivos a procesar
-    files_to_process = select_processing_option(input_folder, config)
+    # Crear una carpeta intermedia temporal en Descargas
+    temp_folder = os.path.join(os.path.expanduser("~"), "Downloads", "temp_processing")
+    os.makedirs(temp_folder, exist_ok=True)
 
-    if not files_to_process:
-        print("No hay archivos para procesar.")
-        return
+    try:
+        # Seleccionar archivos a procesar
+        files_to_process, procesar_incompleto, unidad = select_processing_option(input_folder, config)
 
-    # Procesar cada archivo seleccionado
-    decompress_zip_files(input_folder, output_folder, files_to_process)
+        if not files_to_process:
+            print("No hay archivos para procesar.")
+            return
 
-    # Actualizar el último archivo procesado
-    config['last_processed_file'] = files_to_process[-1]  # Se actualiza con el último archivo procesado
-    save_config(config, config_path)
+        # Procesar cada archivo seleccionado en la carpeta temporal
+        decompress_zip_files(input_folder, temp_folder, files_to_process)
 
-    # Procesar archivos TDMS en paralelo
-    procesar_archivos_tdms_paralelo(output_folder, num_workers=4)
+        # Actualizar el último archivo procesado
+        config['last_processed_file'] = files_to_process[-1]  # Se actualiza con el último archivo procesado
+        save_config(config, config_path)
 
-    # Ejecutar la función para ordenar y agrupar por día
-    ordenar_y_agrupado_por_dia(output_folder)
+        # Procesar archivos TDMS en paralelo en la carpeta temporal
+        procesar_archivos_tdms_paralelo(temp_folder, num_workers=4)
 
-    #Convertir de csv a mat
-    csv_to_mat(output_folder)
+        # Ejecutar la función para ordenar y agrupar por día en la carpeta temporal
+        ordenar_y_agrupado_por_dia(temp_folder, procesar_incompleto)
 
+        # Convertir de CSV a MAT en la carpeta temporal
+        csv_to_mat(temp_folder, unidad)
 
+        # Copiar los resultados procesados a la carpeta de salida final
+        print("Copiando archivos procesados a la carpeta de salida...")
+        for item in os.listdir(temp_folder):
+            source_path = os.path.join(temp_folder, item)
+            dest_path = os.path.join(output_folder, item)
+            if os.path.isdir(source_path):
+                shutil.copytree(source_path, dest_path, dirs_exist_ok=True)
+            else:
+                shutil.copy2(source_path, dest_path)
+
+    finally:
+        # Eliminar la carpeta temporal al finalizar
+        shutil.rmtree(temp_folder)
 
 
 if __name__ == "__main__":
