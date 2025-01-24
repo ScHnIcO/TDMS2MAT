@@ -155,7 +155,7 @@ def procesar_archivos_tdms_paralelo(carpeta_tdms, num_workers=4):
     if not archivos_tdms:
         print(f"No se encontraron archivos TDMS en la carpeta {carpeta_tdms}.")
         return
-
+    print(f"Número de WORKERS: {num_workers}")
     # Crear una barra de progreso
     with tqdm(total=len(archivos_tdms), desc="Procesando archivos TDMS", unit="archivo") as barra:
         # Crear un pool de hilos para procesamiento paralelo
@@ -288,7 +288,25 @@ def csv_to_mat(folder_path, unidad = "05"):
 
     for csv_file in tqdm(csv_files, desc="Convirtiendo archivos", unit="archivo"):
         input_file = os.path.join(folder_path, csv_file)
-        output_file = os.path.join(folder_path, f"{os.path.splitext(csv_file)[0].replace('-', '.')}-u{unidad}.mat")
+        # output_file = os.path.join(folder_path, f"{os.path.splitext(csv_file)[0].replace('-', '.')}-u{unidad}.mat")
+        # Divide el nombre del archivo y elimina los ceros a la izquierda de la fecha
+        file_name = os.path.splitext(csv_file)[0]  # Obtiene el nombre sin extensión
+        parts = file_name.split('-')  # Divide por guiones
+
+        # Procesa las partes de la fecha:
+        # 1. Elimina los dos primeros dígitos del año.
+        # 2. Elimina los ceros a la izquierda de los demás números.
+        parts[0] = parts[0][2:]  # Elimina los dos primeros dígitos del año
+        parts = [str(int(part)) if part.isdigit() else part for part in parts]
+
+        # Une las partes de nuevo con puntos
+        formatted_name = '.'.join(parts)
+
+        # Genera el nombre del archivo final
+        output_file = os.path.join(folder_path, f"{formatted_name}-u{unidad}.mat")
+
+        # Imprime el resultado
+        # print(output_file)
         
         # Paso 1: Leer el archivo CSV
         data = pd.read_csv(input_file, delimiter=";", decimal=".")
@@ -441,7 +459,8 @@ def main():
         save_config(config, config_path)
 
         # Procesar archivos TDMS en paralelo en la carpeta temporal
-        procesar_archivos_tdms_paralelo(temp_folder, num_workers=4)
+        # procesar_archivos_tdms_paralelo(temp_folder, num_workers=4)
+        procesar_archivos_tdms_paralelo(temp_folder, num_workers=os.cpu_count()-2)
 
         # Ejecutar la función para ordenar y agrupar por día en la carpeta temporal
         ordenar_y_agrupado_por_dia(temp_folder, procesar_incompleto)
